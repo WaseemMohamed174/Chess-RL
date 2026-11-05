@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Node
+node_modules/
+
+# Local run data, models and secrets
+.env
+*.log
+*.pt
+*.pth
+*.ckpt
+chessrl_data/
+.DS_Store

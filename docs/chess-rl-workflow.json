@@ -1,0 +1,92 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Chess RL Training Workflow",
+    "quality_profile": "showcase",
+    "output": "docs/chess-rl-workflow.html"
+  },
+  "lanes": [
+    { "id": "pop", "label": "Population coordinator (optional PBT)" },
+    { "id": "gw", "label": "Website & Gateway" },
+    { "id": "train", "label": "Training process (one per run)" },
+    { "id": "play", "label": "Self-play workers (CPU)" },
+    { "id": "gpu", "label": "Inference server (GPU)" }
+  ],
+  "phases": [
+    { "id": "launch", "label": "Launch", "fromCol": 0, "toCol": 1 },
+    { "id": "selfplay", "label": "Self-play", "fromCol": 2, "toCol": 3, "variant": "emphasis" },
+    { "id": "learn", "label": "Learn + arena", "fromCol": 4, "toCol": 5, "variant": "dashed" }
+  ],
+  "mainPath": ["start", "gateway", "orch", "sp", "buffer", "learner", "arena", "gate"],
+  "nodes": [
+    { "id": "p_train", "lane": "pop", "col": 1, "type": "backend", "label": "Train generation", "sublabel": "K iterations each" },
+    { "id": "p_eval", "lane": "pop", "col": 3, "type": "backend", "label": "Evaluate", "sublabel": "vs frozen champion" },
+    { "id": "p_select", "lane": "pop", "col": 5, "type": "backend", "label": "Select", "sublabel": "exploit + explore" },
+
+    { "id": "start", "lane": "gw", "col": 0, "type": "frontend", "label": "Website", "sublabel": "Training page" },
+    { "id": "gateway", "lane": "gw", "col": 1, "type": "backend", "label": "Gateway", "sublabel": "FastAPI, no PyTorch" },
+    { "id": "db", "lane": "gw", "col": 2, "type": "database", "label": "SQLite", "sublabel": "metrics + games" },
+
+    { "id": "orch", "lane": "train", "col": 2, "type": "backend", "label": "Orchestrator", "sublabel": "iteration loop" },
+    { "id": "buffer", "lane": "train", "col": 3, "type": "database", "label": "Replay buffer", "sublabel": "state, policy, z" },
+    { "id": "learner", "lane": "train", "col": 4, "type": "backend", "label": "Learner", "sublabel": "trains candidate" },
+    { "id": "gate", "lane": "train", "col": 5, "type": "security", "label": "Arena gate", "sublabel": "score 0.55 or more?", "tag": "promote or keep" },
+
+    { "id": "sp", "lane": "play", "col": 2, "type": "backend", "label": "Self-play", "sublabel": "MCTS with best net" },
+    { "id": "arena", "lane": "play", "col": 4, "type": "backend", "label": "Arena match", "sublabel": "candidate vs best" },
+
+    { "id": "inf", "lane": "gpu", "col": 2, "type": "messagebus", "label": "Batched inference", "sublabel": "one pass per model" },
+    { "id": "best", "lane": "gpu", "col": 5, "type": "database", "label": "Best weights", "sublabel": "new champion" }
+  ],
+  "edges": [
+    { "id": "e-start", "from": "start", "to": "gateway", "label": "start run", "variant": "emphasis" },
+    { "id": "e-spawn", "from": "gateway", "to": "orch", "label": "spawn + poll events", "variant": "emphasis" },
+    { "id": "e-db", "from": "gateway", "to": "db", "label": "persist", "variant": "dashed", "role": "async" },
+    { "id": "e-live", "from": "gateway", "to": "start", "label": "live push", "variant": "dashed", "role": "return" },
+
+    { "id": "e-play", "from": "orch", "to": "sp", "label": "play N games", "variant": "emphasis" },
+    { "id": "e-leaves", "from": "sp", "to": "inf", "label": "leaf batch", "variant": "default" },
+    { "id": "e-eval", "from": "inf", "to": "sp", "label": "policy + value", "variant": "default", "role": "return" },
+    { "id": "e-samples", "from": "sp", "to": "buffer", "label": "game samples", "variant": "emphasis" },
+    { "id": "e-sample", "from": "buffer", "to": "learner", "label": "batches", "variant": "emphasis" },
+    { "id": "e-cand", "from": "learner", "to": "arena", "label": "candidate", "variant": "emphasis" },
+    { "id": "e-tally", "from": "arena", "to": "gate", "label": "W / D / L", "variant": "security" },
+    { "id": "e-promote", "from": "gate", "to": "best", "label": "promote", "variant": "emphasis" },
+    { "id": "e-reload", "from": "best", "to": "inf", "label": "reload weights", "variant": "dashed", "role": "return" },
+    { "id": "e-next", "from": "gate", "to": "orch", "label": "next iteration", "variant": "dashed", "role": "return" },
+
+    { "id": "e-begin", "from": "p_train", "to": "gateway", "label": "begin runs", "variant": "default" },
+    { "id": "e-trained", "from": "p_train", "to": "p_eval", "label": "trained", "variant": "default" },
+    { "id": "e-ranked", "from": "p_eval", "to": "p_select", "label": "ranked", "variant": "default" },
+    { "id": "e-gen", "from": "p_select", "to": "p_train", "label": "next generation", "variant": "dashed", "role": "return" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "One iteration",
+      "items": [
+        "Self-play with the best net fills the replay buffer",
+        "The learner trains a candidate once enough positions exist",
+        "The candidate replaces the best net only at score 0.55 or more"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Why it stays fast",
+      "items": [
+        "Workers run on CPU without PyTorch",
+        "The server batches leaves from every worker into one forward pass",
+        "A learner gate lets few learners train on the GPU at once"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Population mode",
+      "items": [
+        "Agents train, then all play the same frozen champion",
+        "Top agents stay; the rest become mutated copies of them"
+      ]
+    }
+  ]
+}
